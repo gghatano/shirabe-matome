@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>調べたことまとめ</title>
+  <meta name="description" content="その日に調べたこと・話したことをトピックごとにまとめて公開しています。">
+  <script>
+    // 描画前にテーマを適用してダークモードのちらつきを防ぐ
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "dark" && t !== "light") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      }
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+  <header class="site">
+    <div class="inner">
+      <h1><span class="pin">📓</span>調べたことまとめ<span class="sub">その日のトピックを1件ずつページにしています</span></h1>
+      <div class="header-actions">
+        <a class="header-btn" id="repo-link" href="https://github.com/gghatano/shirabe-matome" target="_blank" rel="noopener noreferrer" aria-label="GitHubリポジトリを開く" title="GitHubリポジトリ">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+        </a>
+        <button class="header-btn theme-toggle" id="theme-toggle" aria-label="ダークモード切替" title="ダークモード切替">🌙</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="top-layout">
+    <div class="col-cal">
+      <div class="cal-wrap" id="cal-wrap"></div>
+    </div>
+    <div class="col-info">
+      <div class="hero" id="hero"></div>
+      <div class="recent-wrap" id="recent"></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="inner">
+      <div class="search">
+        <span class="icon">🔍</span>
+        <input type="search" id="search" placeholder="キーワードで絞り込み（例: GitHub Actions、差分プライバシー）" autocomplete="off">
+      </div>
+      <select id="period-filter" aria-label="期間で絞り込み">
+        <option value="">すべての期間</option>
+        <option value="today">最新の記録</option>
+        <option value="7">過去7日</option>
+        <option value="30">過去30日</option>
+        <option value="90">過去90日</option>
+      </select>
+      <button type="button" id="toggle-tags" class="src-toggle" aria-expanded="false" aria-controls="tag-chips">🏷 タグ</button>
+    </div>
+  </div>
+
+  <div class="chips" id="tag-chips"></div>
+
+  <main>
+    <div class="count" id="count"></div>
+    <div class="cards" id="cards"></div>
+  </main>
+
+  <button id="toTop" title="上に戻る" aria-label="上に戻る">↑</button>
+
+  <footer>
+    <div class="updated" id="updated"></div>
+    その日の調査・会話の内容をトピックごとにまとめたものです。<br>
+    公開するトピックは毎日ひとつずつ選んでいます。
+  </footer>
+
+  <script>
+    const DEFAULT_COLOR = "#64748b";
+
+    const state = {
+      entries: [], tagColors: {},
+      tag: "", q: "", period: "",
+      newest: "",
+      day: "",            // 選択中の日付（ISO） — カレンダー連動
+      calY: 0, calM: 0,   // 表示中のカレンダー年・月（1-12）
+      dayCount: new Map(),// ISO日付 -> 記録件数
+    };
+
+    function esc(s) {
+      return (s ?? "").replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+    function color(tag) { return state.tagColors[tag] || DEFAULT_COLOR; }
+
+    function parseDate(s) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
+      return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
+    }
+    function fmtFull(s) {
+      const d = parseDate(s);
+      return d ? `${d.y}年${d.mo}月${d.d}日` : (s || "");
+    }
+    function daysBetween(a, b) {
+      const da = parseDate(a), db = parseDate(b);
+      if (!da || !db) return Infinity;
+      return Math.abs((Date.UTC(da.y, da.mo - 1, da.d) - Date.UTC(db.y, db.mo - 1, db.d)) / 86400000);
+    }
+
+    function dateChip(it) {
+      const d = parseDate(it.date);
+      if (!d) return "";
+      return `<div class="datechip" title="記録日: ${esc(fmtFull(it.date))}">
+        <div class="label">記録</div>
+        <div class="day">${d.mo}/${d.d}</div>
+        <div class="year">${d.y}</div>
+      </div>`;
+    }
+
+    // アイコン: トピックの絵文字。無ければ先頭タグの色 + 頭文字
+    function thumb(it) {
+      const primary = (it.tags || [])[0] || "";
+      const c = color(primary);
+      const glyph = it.icon || (it.title || "?").trim().charAt(0);
+      return `<div class="thumb-wrap" style="--c:${c}"><span class="thumb-letter">${esc(glyph)}</span></div>`;
+    }
+
+    // ===== タグチップ =====
+    function buildTagChips() {
+      const counts = new Map();
+      for (const it of state.entries) {
+        for (const t of (it.tags || [])) counts.set(t, (counts.get(t) || 0) + 1);
+      }
+      const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      const wrap = document.getElementById("tag-chips");
+
+      const all = document.createElement("button");
+      all.className = "chip";
+      all.setAttribute("aria-pressed", "true");
+      all.dataset.tag = "";
+      all.innerHTML = `すべて <span class="n">${state.entries.length}</span>`;
+      wrap.appendChild(all);
+      for (const [tag, n] of ranked) {
+        const b = document.createElement("button");
+        b.className = "chip";
+        b.setAttribute("aria-pressed", "false");
+        b.dataset.tag = tag;
+        b.innerHTML = `<span class="dot" style="background:${color(tag)}"></span>${esc(tag)} <span class="n">${n}</span>`;
+        wrap.appendChild(b);
+      }
+      wrap.addEventListener("click", (ev) => {
+        const chip = ev.target.closest(".chip");
+        if (!chip) return;
+        state.tag = chip.dataset.tag;
+        wrap.querySelectorAll(".chip").forEach(c =>
+          c.setAttribute("aria-pressed", c === chip ? "true" : "false"));
+        document.getElementById("toggle-tags").classList.toggle("active", !!state.tag);
+        render();
+      });
+    }
+
+    function inPeriod(it) {
+      if (!state.period) return true;
+      if (state.period === "today") return it.date === state.newest;
+      return daysBetween(it.date, state.newest) <= Number(state.period);
+    }
+
+    // 「最新の記録 N件」バナー
+    function renderHero() {
+      const hero = document.getElementById("hero");
+      if (!state.newest) { hero.innerHTML = ""; return; }
+      const n = state.entries.filter(it => it.date === state.newest).length;
+      const active = state.period === "today";
+      hero.innerHTML = `
+        <button class="today" id="today-btn" aria-pressed="${active}">
+          <span class="cal">🆕</span>
+          <span>
+            <span class="lbl">最新の記録</span><br>
+            <span class="big">${n}</span><span class="unit"> 件</span>
+            <span class="sub">（${esc(fmtFull(state.newest))}）</span>
+          </span>
+          <span class="go">${active ? "絞り込み中（解除）" : "この日だけ表示 →"}</span>
+        </button>`;
+      document.getElementById("today-btn").addEventListener("click", () => {
+        state.period = active ? "" : "today";
+        document.getElementById("period-filter").value = state.period;
+        if (state.period && state.day) { selectDay(""); return; }
+        render();
+      });
+    }
+
+    // ===== カレンダー =====
+    const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+    function fmtMDW(iso) {
+      const d = parseDate(iso);
+      if (!d) return iso;
+      const wd = WEEKDAYS[new Date(d.y, d.mo - 1, d.d).getDay()];
+      return `${d.mo}/${d.d}(${wd})`;
+    }
+
+    // 「最近の記録」: 新しい順の横スクロールレール
+    function renderRecent() {
+      const wrap = document.getElementById("recent");
+      const top = [...state.entries]
+        .sort((a, b) => (b.date || "").localeCompare(a.date || "") || a.title.localeCompare(b.title))
+        .slice(0, 12);
+      if (!top.length) { wrap.innerHTML = ""; return; }
+      const cards = top.map(it => `
+        <a class="up-card" href="${esc(it.url)}">
+          <span class="up-date">📅 ${esc(fmtMDW(it.date))}</span>
+          <span class="up-title">${esc(it.title)}</span>
+          <span class="up-tag">${esc((it.tags || []).join(" / "))}</span>
+        </a>`).join("");
+      wrap.innerHTML = `
+        <div class="up-head"><span class="t">🕒 最近の記録</span><span class="s">新しい順・${top.length}件</span></div>
+        <div class="up-rail">${cards}</div>`;
+    }
+
+    function buildDayIndex() {
+      const cnt = new Map();
+      for (const it of state.entries) {
+        if (it.date) cnt.set(it.date, (cnt.get(it.date) || 0) + 1);
+      }
+      state.dayCount = cnt;
+    }
+
+    function renderCalendar() {
+      const wrap = document.getElementById("cal-wrap");
+      const y = state.calY, m = state.calM;
+      const first = new Date(y, m - 1, 1);
+      const startDow = first.getDay();
+      const daysInMonth = new Date(y, m, 0).getDate();
+      const today = new Date();
+      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+      let cells = "";
+      for (let i = 0; i < startDow; i++) cells += `<div class="cal-cell"></div>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        const dow = (startDow + d - 1) % 7;
+        const n = state.dayCount.get(iso) || 0;
+        const cls = [
+          "cal-day",
+          dow === 0 ? "sun" : dow === 6 ? "sat" : "",
+          n > 0 ? "has" : "",
+          iso === state.day ? "sel" : "",
+          iso === todayIso ? "today" : "",
+        ].filter(Boolean).join(" ");
+        const clickable = n > 0 ? `data-date="${iso}"` : "";
+        const aria = n > 0 ? `aria-pressed="${iso === state.day}" title="${fmtFull(iso)}・${n}件"` : "";
+        cells += `<div class="cal-cell"><button class="${cls}" ${clickable} ${aria}>
+            <span class="d">${d}</span>${n > 0 ? `<span class="cnt">${n}</span>` : ""}
+          </button></div>`;
+      }
+
+      const dow = WEEKDAYS.map((w, i) =>
+        `<div class="cal-dow ${i === 0 ? "sun" : i === 6 ? "sat" : ""}">${w}</div>`).join("");
+
+      wrap.innerHTML = `
+        <section class="cal" aria-label="記録カレンダー">
+          <div class="cal-head">
+            <button class="cal-nav" id="cal-prev" aria-label="前の月">‹</button>
+            <div class="title">${y}年${m}月</div>
+            <button class="cal-nav" id="cal-next" aria-label="次の月">›</button>
+          </div>
+          <div class="cal-grid">${dow}${cells}</div>
+          <div class="cal-selected ${state.day ? "show" : ""}" id="cal-selected">
+            <span>📅 <b>${state.day ? fmtFull(state.day) : ""}</b> の記録を表示中</span>
+            <button class="clear" id="cal-clear">解除</button>
+          </div>
+          <div class="cal-hint">記録がある日を色付きで表示。クリックでその日のトピックに絞り込みます。</div>
+        </section>`;
+
+      document.getElementById("cal-prev").addEventListener("click", () => shiftMonth(-1));
+      document.getElementById("cal-next").addEventListener("click", () => shiftMonth(1));
+      const clearBtn = document.getElementById("cal-clear");
+      if (clearBtn) clearBtn.addEventListener("click", () => selectDay(""));
+      wrap.querySelectorAll(".cal-day[data-date]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const iso = btn.dataset.date;
+          selectDay(iso === state.day ? "" : iso);
+        });
+      });
+    }
+
+    function shiftMonth(delta) {
+      let m = state.calM + delta, y = state.calY;
+      if (m < 1) { m = 12; y--; }
+      else if (m > 12) { m = 1; y++; }
+      state.calY = y; state.calM = m;
+      renderCalendar();
+    }
+
+    function selectDay(iso) {
+      state.day = iso;
+      if (iso) {
+        const d = parseDate(iso);
+        state.calY = d.y; state.calM = d.mo;
+        state.period = "";
+        document.getElementById("period-filter").value = "";
+      }
+      renderCalendar();
+      render();
+      if (iso) document.querySelector("main").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function render() {
+      const cards = document.getElementById("cards");
+      const q = state.q.trim().toLowerCase();
+      const filtered = state.entries.filter(it =>
+        (!state.tag || (it.tags || []).includes(state.tag)) &&
+        (!state.day || it.date === state.day) &&
+        inPeriod(it) &&
+        (!q || (`${it.title} ${it.summary} ${(it.tags || []).join(" ")}`).toLowerCase().includes(q))
+      );
+
+      filtered.sort((a, b) => (b.date || "").localeCompare(a.date || "") || a.title.localeCompare(b.title));
+
+      renderHero();
+      document.getElementById("count").textContent = state.day
+        ? `${fmtFull(state.day)}の記録 ${filtered.length}件`
+        : `${filtered.length}件のトピック`;
+
+      if (filtered.length === 0) {
+        cards.innerHTML = '<div class="empty">該当する記録はありません。条件を変えてお試しください。</div>';
+        return;
+      }
+
+      cards.innerHTML = filtered.map(it => {
+        const isNew = state.newest && daysBetween(it.date, state.newest) <= 3;
+        const tags = (it.tags || []).map(t =>
+          `<span class="badge" style="background:${color(t)}">${esc(t)}</span>`).join("");
+        return `
+        <article class="card">
+          <div class="left">
+            ${dateChip(it)}
+            ${thumb(it)}
+          </div>
+          <div class="body">
+            <div class="meta">
+              ${tags}
+              ${it.reading_min ? `<span class="badge read">約${it.reading_min}分</span>` : ""}
+              ${isNew ? `<span class="badge new">NEW</span>` : ""}
+            </div>
+            <h2><a href="${esc(it.url)}">${esc(it.title)}</a></h2>
+            ${it.summary ? `<p class="summary">${esc(it.summary)}</p>` : ""}
+            <div class="actions">
+              <a class="act primary" href="${esc(it.url)}">📄 まとめを読む</a>
+              ${(it.sources || []).length ? `<span class="act">🔗 参照 ${it.sources.length}件</span>` : ""}
+            </div>
+          </div>
+        </article>`;
+      }).join("");
+    }
+
+    async function init() {
+      const cards = document.getElementById("cards");
+      try {
+        const res = await fetch("data/entries.json", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        state.entries = Array.isArray(data.entries) ? data.entries : [];
+        state.tagColors = data.tag_colors || {};
+        if (data.repo_url) document.getElementById("repo-link").href = data.repo_url;
+      } catch (e) {
+        cards.innerHTML = `<div class="error">データの読み込みに失敗しました。（${esc(e.message)}）</div>`;
+        return;
+      }
+
+      state.newest = state.entries.reduce((m, it) => (it.date || "") > m ? it.date : m, "");
+      if (state.newest) {
+        document.getElementById("updated").textContent =
+          `最終更新: ${fmtFull(state.newest)}・全${state.entries.length}件`;
+      }
+
+      buildTagChips();
+      buildDayIndex();
+      renderRecent();
+
+      // カレンダーの初期表示月: 今日の月。記録が無ければ最も近い記録日の月。
+      const today = new Date();
+      state.calY = today.getFullYear();
+      state.calM = today.getMonth() + 1;
+      const curPrefix = `${state.calY}-${String(state.calM).padStart(2, "0")}`;
+      const hasThisMonth = [...state.dayCount.keys()].some(iso => iso.startsWith(curPrefix));
+      if (!hasThisMonth && state.dayCount.size) {
+        const todayMs = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+        let best = null, bestDiff = Infinity;
+        for (const iso of state.dayCount.keys()) {
+          const d = parseDate(iso);
+          const diff = Math.abs(Date.UTC(d.y, d.mo - 1, d.d) - todayMs);
+          if (diff < bestDiff) { bestDiff = diff; best = d; }
+        }
+        if (best) { state.calY = best.y; state.calM = best.mo; }
+      }
+      renderCalendar();
+
+      document.getElementById("search").addEventListener("input", e => { state.q = e.target.value; render(); });
+      document.getElementById("period-filter").addEventListener("change", e => {
+        state.period = e.target.value;
+        if (state.period) selectDay("");
+        else render();
+      });
+
+      const tagToggle = document.getElementById("toggle-tags");
+      const tagChips = document.getElementById("tag-chips");
+      tagToggle.addEventListener("click", () => {
+        const open = tagChips.classList.toggle("show");
+        tagToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+
+      render();
+    }
+
+    // ===== ダークモード切替 =====
+    function applyTheme(t) {
+      document.documentElement.dataset.theme = t;
+      const btn = document.getElementById("theme-toggle");
+      if (btn) btn.textContent = t === "dark" ? "☀️" : "🌙";
+    }
+    (function initTheme() {
+      let t = localStorage.getItem("theme");
+      if (t !== "dark" && t !== "light") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      }
+      applyTheme(t);
+      document.getElementById("theme-toggle").addEventListener("click", () => {
+        const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        localStorage.setItem("theme", next);
+        applyTheme(next);
+      });
+    })();
+
+    const toTop = document.getElementById("toTop");
+    window.addEventListener("scroll", () => toTop.classList.toggle("show", window.scrollY > 600));
+    toTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+
+    init();
+  </script>
+</body>
+</html>

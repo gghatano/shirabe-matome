@@ -1,0 +1,11 @@
+# 生成物（CI で毎回ビルドする）
+entries/
+data/
+
+# 未承認のドラフト — 公開対象に選んだものだけ posts/ へ移す
+drafts/
+
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

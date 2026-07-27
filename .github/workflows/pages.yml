@@ -1,0 +1,42 @@
+name: Deploy to GitHub Pages
+
+on:
+  # main へのプッシュ（マージ含む）で即デプロイ
+  push:
+    branches: [main]
+  # 手動実行も可能
+  workflow_dispatch:
+
+# 同時デプロイは1つに制限（実行中のものは完了させる）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      # posts/*.md から entries/ と data/entries.json を作り直す
+      # （生成物はコミットせず、デプロイ時に毎回ビルドする）
+      - run: python build.py --clean
+      - uses: actions/configure-pages@v5
+        with:
+          # Pages を「GitHub Actions」ビルドタイプで自動有効化
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+      - uses: actions/deploy-pages@v4
+        id: deployment

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}}｜調べたことまとめ</title>
+  <meta name="description" content="{{DESCRIPTION}}">
+  <script>
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "dark" && t !== "light") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      }
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="../assets/base.css">
+</head>
+<body>
+  <header class="site">
+    <div class="inner">
+      <h1><a href="../index.html"><span class="pin">📓</span>調べたことまとめ</a></h1>
+      <div class="header-actions">
+        <a class="header-btn" href="{{REPO_URL}}" target="_blank" rel="noopener noreferrer" aria-label="GitHubリポジトリを開く" title="GitHubリポジトリ">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+        </a>
+        <button class="header-btn theme-toggle" id="theme-toggle" aria-label="ダークモード切替" title="ダークモード切替">🌙</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="crumb">
+    <a href="../index.html">← 一覧に戻る</a>
+    <span> ／ </span>
+    <a href="../index.html">{{DATE_FULL}}</a>
+  </nav>
+
+  <article class="entry">
+    <div class="entry-head">
+      <div class="meta">{{TAG_BADGES}}{{READ_BADGE}}</div>
+      <h1>{{ICON}}{{TITLE}}</h1>
+      {{LEAD}}
+      <div class="stamp">📅 {{DATE_FULL}}（{{WEEKDAY}}）の記録</div>
+    </div>
+
+    <div class="prose">
+{{CONTENT}}
+    </div>
+  </article>
+
+  <div class="entry-tail">
+    {{SOURCES}}
+    <div class="entry-nav">{{NAV}}</div>
+  </div>
+
+  <button id="toTop" title="上に戻る" aria-label="上に戻る">↑</button>
+
+  <footer>
+    その日の調査・会話の内容をトピックごとにまとめたものです。<br>
+    <a href="../index.html">すべての記録を見る</a>
+  </footer>
+
+  <script>
+    function applyTheme(t) {
+      document.documentElement.dataset.theme = t;
+      const btn = document.getElementById("theme-toggle");
+      if (btn) btn.textContent = t === "dark" ? "☀️" : "🌙";
+    }
+    (function initTheme() {
+      let t = localStorage.getItem("theme");
+      if (t !== "dark" && t !== "light") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      }
+      applyTheme(t);
+      document.getElementById("theme-toggle").addEventListener("click", () => {
+        const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        localStorage.setItem("theme", next);
+        applyTheme(next);
+      });
+    })();
+    const toTop = document.getElementById("toTop");
+    window.addEventListener("scroll", () => toTop.classList.toggle("show", window.scrollY > 600));
+    toTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+  </script>
+</body>
+</html>
