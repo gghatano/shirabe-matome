@@ -1,0 +1,19 @@
+[Unit]
+Description=調べたことまとめ を毎日実行する
+Documentation=https://github.com/gghatano/shirabe-matome
+
+[Timer]
+# 毎日 08:00。OnCalendar はシステムのローカル時刻で解釈される
+# （このマシンは Asia/Tokyo なので JST 08:00）。
+# 朝に走らせるため対象は前日分。service 側で --yesterday を渡している。
+OnCalendar=*-*-* 08:00:00
+
+# WSL や PC が止まっていて実行時刻を過ぎた場合、次に起きたときに走らせる。
+# cron には無い挙動で、常時起動でないマシンではこれが無いと日が飛ぶ。
+Persistent=true
+
+# 同時刻に他のジョブが重ならないよう少しばらす
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

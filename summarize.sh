@@ -24,6 +24,19 @@ if [[ ! -f "$MATERIAL" ]]; then
   exit 1
 fi
 
+# claude の場所を自力で解決する。cron や systemd から起動されると PATH が
+# ログインシェルのものと違い、mise 配下の claude が見つからない。
+CLAUDE="${CLAUDE_BIN:-$(command -v claude || true)}"
+if [[ -z "$CLAUDE" ]]; then
+  for candidate in "$HOME/.local/share/mise/shims/claude" "$HOME/.local/bin/claude"; do
+    if [[ -x "$candidate" ]]; then CLAUDE="$candidate"; break; fi
+  done
+fi
+if [[ -z "$CLAUDE" ]]; then
+  echo "エラー: claude が見つかりません。CLAUDE_BIN=/path/to/claude を指定してください" >&2
+  exit 1
+fi
+
 echo "● $DATE の素材を要約します（$(wc -c < "$MATERIAL" | tr -d ' ') bytes）"
 
 PROMPT="$(sed "s/{{DATE}}/${DATE}/g" prompts/summarize.md)"
@@ -41,7 +54,7 @@ PROMPT="$(sed "s/{{DATE}}/${DATE}/g" prompts/summarize.md)"
 #
 # --permission-mode acceptEdits も付けない。編集を無条件に通すため、
 # 上のパス制限が意味を失う。既定のモードなら許可されていない操作は拒否される。
-claude -p "$PROMPT" \
+"$CLAUDE" -p "$PROMPT" \
   --allowedTools "Read(./**)" "Glob(./**)" "Grep(./**)" "Edit(drafts/**)"
 
 INDEX="drafts/${DATE}/index.json"

@@ -2,6 +2,7 @@
 # 日次ジョブ（フェーズ1）。収集 → 要約 → Discord へ通知して終わる。
 #
 #   ./daily.sh [YYYY-MM-DD]
+#   ./daily.sh --yesterday      # 前日分（朝に走らせる定時ジョブ用）
 #
 # ここでは公開しない。公開は人が番号を選んだあと publish.py が行う（フェーズ2）。
 # 定時ジョブは人の返信を待てないので、間を drafts/<日付>/ のファイルでつなぐ。
@@ -10,7 +11,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-DATE="${1:-$(TZ=Asia/Tokyo date +%F)}"
+# 朝に走らせる場合、当日を対象にすると素材がほぼ空になる。前日を指定する。
+case "${1:-}" in
+  --yesterday) DATE="$(TZ=Asia/Tokyo date -d yesterday +%F)" ;;
+  "")          DATE="$(TZ=Asia/Tokyo date +%F)" ;;
+  *)           DATE="$1" ;;
+esac
 PYTHON="${PYTHON:-.venv/bin/python}"
 
 echo "=== $DATE の日次まとめ ==="

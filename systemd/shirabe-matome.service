@@ -1,0 +1,32 @@
+[Unit]
+Description=調べたことまとめ — その日の会話を収集・要約して Discord に通知する
+Documentation=https://github.com/gghatano/shirabe-matome
+# ネットワークが上がってから（Discord API と claude を叩くため）
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/workspace/projects/shirabe-matome
+
+# cron / systemd から起動されると PATH がログインシェルのものと違い、
+# mise 配下の claude が見つからない。summarize.sh 側でも解決するが、
+# ここでも通しておく。
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# 要約は LLM 呼び出しなので分単位でかかる。素材が多い日でも落ちないよう長めに取る。
+TimeoutStartSec=30min
+
+ExecStart=%h/workspace/projects/shirabe-matome/daily.sh --yesterday
+
+ProtectSystem=full
+PrivateTmp=false
+NoNewPrivileges=true
+
+# 日次ジョブは公開しない。要約段はプロンプトインジェクションに晒されるので、
+# 「公開できない」ことを権限設定だけでなく OS 側でも担保しておく。
+# posts/ へ書けるのは人が publish.py を叩いたときだけ。
+ReadOnlyPaths=%h/workspace/projects/shirabe-matome/posts
+ReadOnlyPaths=%h/workspace/projects/shirabe-matome/.git
+
+[Install]
+WantedBy=default.target
