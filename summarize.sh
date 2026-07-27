@@ -54,12 +54,39 @@ PROMPT="$(sed "s/{{DATE}}/${DATE}/g" prompts/summarize.md)"
 #
 # --permission-mode acceptEdits も付けない。編集を無条件に通すため、
 # 上のパス制限が意味を失う。既定のモードなら許可されていない操作は拒否される。
-"$CLAUDE" -p "$PROMPT" \
-  --allowedTools "Read(./**)" "Glob(./**)" "Grep(./**)" "Edit(drafts/**)"
-
 INDEX="drafts/${DATE}/index.json"
+ROOT="$(pwd)"
+
+# 既に一覧があるなら作り直さない。
+#
+# 通知した一覧の番号を見て人が「1だけ公開」と答える設計なので、要約をやり直すと
+# その番号が別の記事を指すようになる。承認が宙に浮き、見ていないものを公開しかねない。
+# 作り直したいときは明示的に --force を付ける（＝出した番号を捨てる意思表示）。
+if [[ -f "$INDEX" && "${2:-}" != "--force" ]]; then
+  echo "● $DATE は既に要約済みです。作り直しません"
+  echo "  一覧: $PYTHON publish.py --date $DATE"
+  echo "  作り直す場合: $0 $DATE --force（通知済みの番号は無効になります）"
+  exit 0
+fi
+
+# 相対・絶対どちらの形で書きにいっても通るようにしておく。
+run_summarizer() {
+  "$CLAUDE" -p "$PROMPT" \
+    --allowedTools "Read(./**)" "Glob(./**)" "Grep(./**)" \
+                   "Edit(drafts/**)" "Edit(//${ROOT}/drafts/**)"
+}
+
+# 何を書くかはモデルの判断なので、たまに「権限が要る」と報告して
+# 1ファイルも書かずに終わることがある（Bash のリダイレクトを試して弾かれるなど）。
+# 出力が無ければ1度だけやり直す。
+run_summarizer
 if [[ ! -f "$INDEX" ]]; then
-  echo "エラー: $INDEX が作られませんでした" >&2
+  echo "⚠ $INDEX が作られなかったのでやり直します（1回だけ）" >&2
+  run_summarizer
+fi
+
+if [[ ! -f "$INDEX" ]]; then
+  echo "エラー: $INDEX が作られませんでした（2回試行）" >&2
   exit 1
 fi
 

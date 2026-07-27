@@ -44,7 +44,11 @@ def token() -> str:
 
 
 def newest_channel() -> str | None:
-    """会話ログに残っている直近の Discord チャンネル ID を拾う。"""
+    """会話ログに残っている直近の Discord チャンネル ID を拾う。
+
+    JSONL の生の行では `chat_id=\\"123\\"` のようにクォートがエスケープされている。
+    行そのものに正規表現をかけると一致しないので、必ず JSON を解いてから探す。
+    """
     best_ts, best_id = "", None
     pat = re.compile(r'<channel\s+[^>]*chat_id="(\d+)"')
     if not PROJECTS_DIR.is_dir():
@@ -57,13 +61,17 @@ def newest_channel() -> str | None:
         for line in text.splitlines():
             if "chat_id=" not in line:
                 continue
-            m = pat.search(line)
-            if not m:
-                continue
             try:
-                ts = json.loads(line).get("timestamp", "")
+                obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            content = (obj.get("message") or {}).get("content")
+            if not isinstance(content, str):
+                continue
+            m = pat.search(content)
+            if not m:
+                continue
+            ts = obj.get("timestamp", "")
             if ts > best_ts:
                 best_ts, best_id = ts, m.group(1)
     return best_id
