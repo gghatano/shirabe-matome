@@ -203,12 +203,36 @@ python notify.py --date 2026-07-26 --dry-run       # 通知本文の確認
 
 ### 定期実行
 
-`daily.sh` を cron に置く。夜のうちに走らせておけば、朝に Discord で選ぶだけになる。
+`systemd/` の unit を入れると、毎朝 08:00 に前日分が処理される。
 
-```cron
-0 23 * * * cd ~/workspace/projects/shirabe-matome && ./daily.sh >> /tmp/shirabe.log 2>&1
+```bash
+cp systemd/shirabe-matome.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now shirabe-matome.timer
+
+systemctl --user list-timers shirabe-matome.timer   # 次回実行時刻
+journalctl --user -u shirabe-matome.service -n 50   # 実行ログ
+systemctl --user disable --now shirabe-matome.timer # 止める
 ```
+
+cron ではなく systemd timer を使っている理由は2つ。
+
+- **`Persistent=true` が効く。** PC が止まっていて実行時刻を過ぎても、次に起きたときに
+  走る。cron にはこの挙動が無く、その日のぶんが丸ごと飛ぶ。
+- WSL では cron デーモンが動いていないことが多い。systemd user は `Linger=yes` に
+  しておけばログアウト後も動く。
+
+時刻を変えるなら `shirabe-matome.timer` の `OnCalendar` を編集して
+`systemctl --user daemon-reload` する。`OnCalendar` は**システムのローカル時刻**で
+解釈されるので、TZ が UTC のマシンでは書いた時刻とずれる（`timedatectl` で確認）。
+
+朝に走らせるので対象は前日分。service は `daily.sh --yesterday` を呼んでいる。
+当日を対象にすると素材がほぼ空になるため。
+
+**定時実行で踏みやすい罠**: cron / systemd から起動されると PATH がログインシェルと
+違い、`claude` が見つからず `command not found` で落ちる。`summarize.sh` が自力で
+解決するようにしてあるが、service 側でも `Environment=PATH=` を通してある。
 
 ## 注意
 
-`posts/` に入っている記事はレイアウト確認用のサンプル。実運用の前に差し替えるか削除する。
+`posts/` に入っている記事はレイアウト確認用のサンプル。
