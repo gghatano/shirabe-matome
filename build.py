@@ -20,6 +20,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import markdown
+import nh3
 import yaml
 
 ROOT = Path(__file__).resolve().parent
@@ -45,6 +46,35 @@ CHARS_PER_MIN = 500
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 FILENAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)$")
 TABLE_RE = re.compile(r"<table>.*?</table>", re.DOTALL)
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# 本文は LLM が生成し、その入力には Discord から来た第三者の文章が混ざる。
+# Markdown は生 HTML をそのまま通すので、許可したタグ以外は落とす。
+# GitHub Pages のユーザーサイトは全リポジトリが同一オリジンなので、
+# ここでの XSS は同じアカウントの他のページにも影響する。
+ALLOWED_TAGS = {
+    "p", "br", "hr", "div", "span",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "ul", "ol", "li", "dl", "dt", "dd",
+    "strong", "em", "b", "i", "u", "s", "del", "ins", "sup", "sub", "mark",
+    "code", "pre", "kbd", "samp", "var",
+    "blockquote", "q", "cite",
+    "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col",
+    "a", "img", "figure", "figcaption", "abbr",
+}
+ALLOWED_ATTRS = {
+    # rel は link_rel で nh3 が付けるので、ここでは許可しない（同時指定はエラー）
+    "a": {"href", "title", "target"},
+    "img": {"src", "alt", "title", "width", "height", "loading"},
+    "div": {"class"},
+    "span": {"class"},
+    "code": {"class"},
+    "pre": {"class"},
+    "th": {"colspan", "rowspan", "align"},
+    "td": {"colspan", "rowspan", "align"},
+    "abbr": {"title"},
+}
+ALLOWED_SCHEMES = {"http", "https", "mailto"}
 
 
 class BuildError(Exception):
@@ -61,7 +91,11 @@ def parse_post(path: Path) -> dict:
     try:
         meta = yaml.safe_load(m.group(1)) or {}
     except yaml.YAMLError as e:
-        raise BuildError(f"{path.name}: フロントマターの YAML が壊れています: {e}") from e
+        # 技術記事のタイトルはコロンを含みやすく、囲み忘れがいちばん多い原因
+        hint = ""
+        if any(": " in ln.split(": ", 1)[-1] for ln in m.group(1).splitlines() if ": " in ln):
+            hint = "\n  ヒント: 値に ':' が含まれる行は値全体をダブルクォートで囲んでください"
+        raise BuildError(f"{path.name}: フロントマターの YAML が壊れています: {e}{hint}") from e
     if not isinstance(meta, dict):
         raise BuildError(f"{path.name}: フロントマターは key: value 形式にしてください")
 
@@ -70,6 +104,11 @@ def parse_post(path: Path) -> dict:
     stem = path.stem
     fm = FILENAME_RE.match(stem)
     slug = fm.group(2) if fm else stem
+    # slug は出力ファイル名とリンク先になる。想定外の文字が入るとパスが壊れる。
+    if not SLUG_RE.match(slug):
+        raise BuildError(
+            f"{path.name}: slug {slug!r} が不正です"
+            "（英小文字・数字・ハイフンのみ、先頭は英数字）")
 
     # 日付はフロントマター優先、無ければファイル名から
     raw_date = meta.get("date") or (fm.group(1) if fm else None)
@@ -96,12 +135,30 @@ def parse_post(path: Path) -> dict:
     sources = []
     for s in meta.get("sources") or []:
         if isinstance(s, str):
-            sources.append({"label": s, "url": s})
+            label, url = s, s
         elif isinstance(s, dict) and s.get("url"):
-            sources.append({"label": str(s.get("label") or s["url"]), "url": str(s["url"])})
+            label, url = str(s.get("label") or s["url"]), str(s["url"])
+        else:
+            continue
+        # href に javascript: や data: を入れられないようにする。
+        # 本文と違い frontmatter は nh3 を通らないので、ここで弾く必要がある。
+        scheme = url.split(":", 1)[0].lower() if ":" in url else ""
+        if scheme not in ALLOWED_SCHEMES:
+            raise BuildError(
+                f"{path.name}: sources の URL {url!r} は許可されていないスキームです"
+                f"（{'/'.join(sorted(ALLOWED_SCHEMES))} のみ）")
+        sources.append({"label": label, "url": url})
 
     md = markdown.Markdown(extensions=["extra", "sane_lists", "admonition"])
     content_html = md.convert(body)
+    # 許可タグ以外を落とす。javascript: などのスキームもここで弾かれる。
+    content_html = nh3.clean(
+        content_html,
+        tags=ALLOWED_TAGS,
+        attributes=ALLOWED_ATTRS,
+        url_schemes=ALLOWED_SCHEMES,
+        link_rel="noopener noreferrer",
+    )
     # 幅の広い表は横スクロールさせる（モバイルで本文がはみ出さないように）
     content_html = TABLE_RE.sub(lambda m_: f'<div class="table-scroll">{m_.group(0)}</div>', content_html)
 

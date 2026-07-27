@@ -9,10 +9,18 @@
 
 ```
 shirabe-matome/
+├── daily.sh              日次ジョブ: 収集 → 要約 → 通知
+│   ├── collect.py        会話ログ + Discord → drafts/<日付>/material.md
+│   ├── summarize.sh      material.md → drafts/<日付>/*.md（claude -p）
+│   │   └── prompts/summarize.md   要約の指示
+│   └── notify.py         ドラフト一覧を Discord へ
+├── publish.py            選ばれたものを posts/ へ → ビルド → commit → push
+│
 ├── index.html            一覧ページ（カレンダー + カード）
 ├── assets/base.css       一覧と個別ページで共有するスタイル
 ├── templates/entry.html  個別ページのテンプレート
 ├── build.py              posts/*.md → entries/*.html + data/entries.json
+│
 ├── posts/                公開すると決めた Markdown ← 唯一のソース
 ├── drafts/               未承認のドラフト（gitignore）
 ├── entries/              生成物（gitignore）
@@ -20,6 +28,7 @@ shirabe-matome/
 ```
 
 `posts/` だけが人の手で管理する場所。`entries/` と `data/` はいつ消してもビルドで戻る。
+`drafts/` は gitignore されているので、`publish.py` で明示的に選ぶまで公開されない。
 
 ## ビルド
 
@@ -76,8 +85,15 @@ sources:
 `main` への push で `.github/workflows/pages.yml` が動く。CI 側で `build.py --clean` を
 実行してから Pages にアップロードするので、生成物をコミットする必要はない。
 
-Pages のソース設定は `configure-pages` の `enablement: true` が面倒を見るため、
-リポジトリ作成後に Settings を手で触る必要はない。
+`enablement: true` は Pages のソース設定を切り替えてくれるが、**リポジトリ作成直後の
+初回だけは効かない**。ワークフローの `GITHUB_TOKEN` には Pages サイトを新規作成する
+権限が無く、`Resource not accessible by integration` で落ちる。一度だけ手で有効化する。
+
+```bash
+gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow
+```
+
+2回目以降は既にサイトが存在するので、そのまま通る。
 
 ## 公開フロー
 
@@ -85,25 +101,113 @@ Pages のソース設定は `configure-pages` の `enablement: true` が面倒�
 
 2つを混ぜる。
 
-| 元 | 場所 | 備考 |
+| 元 | 取得方法 | 備考 |
 |---|---|---|
-| Claude Code の会話ログ | `~/.claude/projects/*/**.jsonl` | プロジェクト単位でディレクトリが分かれている |
-| Discord の会話 | Discord API（`fetch_messages`） | 雑談が混ざるので、まとめる価値のあるやりとりだけ拾う除外フィルタが要る |
+| Claude Code の会話ログ | `~/.claude/projects/*/*.jsonl` を直接読む | プロジェクト単位でディレクトリが分かれている |
+| Discord の会話 | Discord REST API | Claude を経由しなかった発言を拾うため |
 
-どちらも「その日の分」を日付で拾って1本のトピック列に統合し、重複する話題はまとめる。
-同じ話を両方でしていることがあるので、統合はソース単位ではなくトピック単位で行う。
+Discord のやりとりが Claude Code 経由で行われた場合、それはログ側にも `<channel ...>` 付きで
+残る。`collect.py` は message_id で重複を除くので、二重には載らない。
+
+統合は**ソース単位ではなくトピック単位**で行う。同じ話を Claude Code と Discord の両方で
+していることがあるため。
 
 ### 2段階の承認
 
-定時ジョブは人の返信を待てないので、間を `drafts/` のファイルでつなぐ。
+定時ジョブは人の返信を待てない。セッションは処理が終われば落ちるので、返信を待ち続ける
+一本のジョブは作れない。間を `drafts/<日付>/` のファイルでつなぐ。
 
 ```
-フェーズ1（定時）  その日のログを要約 → drafts/YYYY-MM-DD/ に保存 → 一覧を通知
-フェーズ2（返信時） 選ばれたものを posts/ へ移動 → commit → push → 自動デプロイ
+フェーズ1（定時）   ./daily.sh
+                    収集 → 要約 → drafts/<日付>/ に保存 → Discord へ一覧を通知 → 終了
+                    ↓（ここでセッションは切れる。返信は何時間後でもいい）
+フェーズ2（返信時）  python publish.py --date <日付> --select 1,3
+                    選ばれた分を posts/ へ → ビルド検証 → commit → push → 自動デプロイ
 ```
 
-`drafts/` は gitignore されているので、明示的に `posts/` へ移すまで公開されない。
+`drafts/` は gitignore されているので、`publish.py` で明示的に選ぶまで公開されない。
 既定が「出さない」側に倒れているのが重要で、逆にすると事故ったときに取り返しがつかない。
+GitHub Pages は消してもキャッシュと検索インデックスが残る。
+
+### 使い方
+
+```bash
+./daily.sh                                   # 今日ぶんを収集・要約・通知
+./daily.sh 2026-07-26                        # 日付を指定
+
+python publish.py --date 2026-07-26          # ドラフト一覧を見る（変更なし）
+python publish.py --date 2026-07-26 --select 1,3
+python publish.py --date 2026-07-26 --select all
+python publish.py --date 2026-07-26 --select none
+```
+
+個別に動かすこともできる。
+
+```bash
+python collect.py --date 2026-07-26 --no-discord   # 収集だけ（Discord を叩かない）
+./summarize.sh 2026-07-26                          # 要約だけ
+python notify.py --date 2026-07-26 --dry-run       # 通知本文の確認
+```
+
+### 脅威モデル
+
+このパイプラインの入力には **第三者が書いた文章（Discord のメッセージ）** が混ざり、
+出力は **public な GitHub Pages** に出る。しかも GitHub Pages のユーザーサイトは
+全リポジトリが同一オリジン（`<user>.github.io`）なので、ここでの XSS は同じアカウントの
+他のプロジェクトページにも影響する。要約段は LLM なので、入力に仕込まれた指示に
+従ってしまう可能性を前提に置く。
+
+### 安全側に倒している点
+
+**要約段（`summarize.sh`）の権限**
+
+- 読み取りを `Read(./**)` `Grep(./**)` でリポジトリ内に限定している。素の `Read` を
+  許可すると `~/.claude/channels/discord/.env` のような秘密ファイルまで読めてしまい、
+  material.md に仕込まれた指示でトークンを記事に埋め込む経路が成立する（実際に成立した）。
+- 書き込みは `Edit(drafts/**)` のみ。`posts/` には触れない。パス制限は `Edit(...)` で
+  書く必要がある — `Write(drafts/**)` はファイル権限チェックに一致せず、**制限として
+  機能しない**。
+- `--permission-mode acceptEdits` は付けない。編集を無条件に通すため、パス制限が無効化される。
+
+**公開段（`publish.py`）**
+
+- `--select` を付けない限り**何も変更しない**。既定は一覧表示だけ。
+- `slug` を `^[a-z0-9][a-z0-9-]*$` で検証する。index.json は LLM 生成なので、
+  `../../README` のような値が入るとリポジトリ外のファイルを読みにいく。
+- 書き込む前に**全件を検査**する。1件でも不正なら1つも公開しない。
+- 公開後に `build.py` を走らせ、失敗したら書いたファイルを全て消す。途中で落ちても
+  未承認のファイルが `posts/` に残らない（残ると次回のコミットに紛れ込む）。
+- 同じ日・同じ slug が既に `posts/` にあれば中断する（重複公開の防止）。
+
+**ビルド段（`build.py`）**
+
+- 本文の HTML を `nh3` で許可リスト方式にサニタイズする。Markdown は生 HTML を
+  そのまま通すため、これが無いと `<script>` がそのまま公開ページに出る。
+- `sources` の URL スキームを `http` / `https` / `mailto` に限る。frontmatter は
+  サニタイザを通らないので、`javascript:` をここで弾く必要がある。
+- frontmatter の値は `html.escape` で埋め込む（タイトルやタグ経由の XSS を防ぐ）。
+
+**要約プロンプト**
+
+- 鍵・絶対パス・未公開の案件名などを落とすよう指示している。判断がつかないものには
+  `needs_review: true` が付き、通知に ⚠️ 付きで出る。
+
+### 既知の限界
+
+- **プロンプトインジェクション自体は防げていない。** 権限を絞ってあるので被害は
+  「リポジトリ内の情報が記事に混ざる」までに限定されるが、最後の砦は人の承認。
+- 端末から `<channel ...>` タグを含む文字列を打つと、収集段は Discord 発言として
+  扱う。なりすませるのは自分自身だけなので実害はないが、正確ではない。
+- 承認は「記事タイトルと1行説明」を見て行う。本文まで読まずに承認すると、埋め込まれた
+  ものを見落とす。`drafts/<日付>/<slug>.md` を開いてから選ぶのが本来。
+
+### 定期実行
+
+`daily.sh` を cron に置く。夜のうちに走らせておけば、朝に Discord で選ぶだけになる。
+
+```cron
+0 23 * * * cd ~/workspace/projects/shirabe-matome && ./daily.sh >> /tmp/shirabe.log 2>&1
+```
 
 ## 注意
 

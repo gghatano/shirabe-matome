@@ -54,7 +54,17 @@ jobs:
 
 **`permissions` の 3 つは必須**。`pages: write` と `id-token: write` が無いと `deploy-pages` が認証に失敗する。`id-token` は OIDC トークンの発行に使われる。
 
-**`enablement: true`** を付けておくと、リポジトリ設定で Pages のソースが未設定だったりブランチ公開になっていても、Actions ビルドに切り替えてくれる。手で Settings を触る手順が消えるので、テンプレートとして配る構成では入れておくと楽。
+**`enablement: true`** を付けておくと、リポジトリ設定で Pages のソースが未設定だったりブランチ公開になっていても、Actions ビルドに切り替えてくれる。
+
+ただし **新規リポジトリの初回だけは効かない**。Pages サイトがまだ存在しない状態では「切り替え」ではなく「新規作成」になり、ワークフローの `GITHUB_TOKEN` にはその権限が無いため `Resource not accessible by integration` で落ちる。`permissions: pages: write` を宣言していても足りない。
+
+初回だけ手で有効化する。
+
+```bash
+gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow
+```
+
+2回目以降は既にサイトが存在するので、`enablement: true` のまま通る。
 
 **`concurrency` で `cancel-in-progress: false`**。デプロイは途中でキャンセルすると中途半端な状態になりうるので、走っているものは完走させて後続を待たせる。ビルドと違ってここは並列化の旨味がない。
 
