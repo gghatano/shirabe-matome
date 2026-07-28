@@ -118,6 +118,22 @@ inbox/2026-07-28-chatgpt-http2-priority.md
 断定形で書かない」と指示してある。この環境で実際に動かしていない以上、他と同じ扱いに
 してはいけない。
 
+#### スキルで放り込む
+
+`skills/inbox-note/` に Claude Code のスキルがある。調査結果を貼って「これを取り込んで」と
+言えば、日付つきのファイル名・出典・検証状況を整えて `inbox/` に保存する。URL だけ渡せば
+取得して要点をまとめる。
+
+インストールは symlink を張るだけ。リポジトリ側を直せばそのまま反映される。
+
+```bash
+mkdir -p ~/.claude/skills
+ln -sfn "$PWD/skills/inbox-note" ~/.claude/skills/inbox-note
+```
+
+Discord からでも使える（常駐セッションがスキルを持っているため）。外出先で読んだ記事を
+そのまま投げておけば、翌朝の要約に入る。
+
 Discord のやりとりが Claude Code 経由で行われた場合、それはログ側にも `<channel ...>` 付きで
 残る。`collect.py` は message_id で重複を除くので、二重には載らない。
 
