@@ -105,6 +105,18 @@ gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow
 |---|---|---|
 | Claude Code の会話ログ | `~/.claude/projects/*/*.jsonl` を直接読む | プロジェクト単位でディレクトリが分かれている |
 | Discord の会話 | Discord REST API | Claude を経由しなかった発言を拾うため |
+| `inbox/` に置いたファイル | ディレクトリを読む | ChatGPT など他ツールでの調べもの、記事のメモ |
+
+`inbox/` は「この環境を通らなかった調べもの」の投入口。ファイル名の先頭に `YYYY-MM-DD` を
+付ければその日の素材になり、無ければ更新時刻で判定する。
+
+```
+inbox/2026-07-28-chatgpt-http2-priority.md
+```
+
+ここに置いたものは**検証されていない**。要約段には「`📥 外部メモ` は未検証として扱い、
+断定形で書かない」と指示してある。この環境で実際に動かしていない以上、他と同じ扱いに
+してはいけない。
 
 Discord のやりとりが Claude Code 経由で行われた場合、それはログ側にも `<channel ...>` 付きで
 残る。`collect.py` は message_id で重複を除くので、二重には載らない。

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """その日の会話素材を集めて 1 枚の Markdown にまとめる。
 
-素材は2つ。
+素材は3つ。
 
 1. Claude Code の会話ログ  ~/.claude/projects/*/*.jsonl
 2. Discord のチャンネル履歴  Discord REST API
+3. inbox/ に置いたファイル  ChatGPT の要約、記事の URL、手書きメモなど
 
 Discord のやりとりが Claude Code 経由で行われた場合、それは 1 のログにも
 `<channel ...>` 付きで残っている。二重に載らないよう message_id で重複を除く。
@@ -32,8 +33,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DRAFTS_DIR = ROOT / "drafts"
+INBOX_DIR = ROOT / "inbox"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 DISCORD_ENV = Path.home() / ".claude" / "channels" / "discord" / ".env"
+
+# inbox のファイル名から日付を取る。付いていなければ更新時刻で判定する。
+INBOX_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+# 手で置くものなので、1ファイルの取り込み上限は会話より大きめに取る
+MAX_INBOX = 20_000
 
 JST = timezone(timedelta(hours=9))
 
@@ -254,6 +261,55 @@ def collect_discord(day: str, channels: set[str], skip_ids: set[str]) -> list[di
     return events
 
 
+# ---------------------------------------------------------------- inbox
+
+def collect_inbox(day: str) -> list[dict]:
+    """inbox/ に置かれたファイルのうち、その日のぶんを読む。
+
+    Claude Code や Discord を通らなかった調べもの（ChatGPT でのやりとり、
+    読んだ記事、手書きのメモ）を素材に混ぜるための入口。
+
+    日付は「ファイル名の先頭 YYYY-MM-DD」で決める。付いていなければ更新時刻を使う。
+    """
+    if not INBOX_DIR.is_dir():
+        return []
+
+    # README.md はこのディレクトリの説明であって素材ではない
+    skip = {"README.md", "readme.md"}
+
+    events = []
+    for path in sorted(INBOX_DIR.glob("*")):
+        if not path.is_file() or path.name.startswith((".", "_")) or path.name in skip:
+            continue
+        m = INBOX_DATE_RE.match(path.name)
+        if m:
+            file_day = m.group(1)
+            at = datetime.strptime(file_day, "%Y-%m-%d").replace(tzinfo=JST)
+        else:
+            at = datetime.fromtimestamp(path.stat().st_mtime, JST)
+            file_day = at.strftime("%Y-%m-%d")
+        if file_day != day:
+            continue
+
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError as e:
+            print(f"  inbox/{path.name} を読めません: {e}", file=sys.stderr)
+            continue
+        if not body:
+            continue
+
+        events.append({
+            "at": at,
+            "session": "-",
+            "project": "inbox",
+            "kind": "inbox",
+            "who": path.name,
+            "text": clip(body, MAX_INBOX),
+        })
+    return events
+
+
 # ---------------------------------------------------------------- 出力
 
 LABEL = {
@@ -263,6 +319,7 @@ LABEL = {
     "discord_out": "🤖 Discord返信",
     "discord_bot": "🤖 Discord(bot)",
     "tools": "🔧 操作",
+    "inbox": "📥 外部メモ",
 }
 
 
@@ -317,6 +374,12 @@ def main() -> int:
     print(f"● {args.date} の素材を集めます")
     events, seen_ids, stats = collect_transcripts(args.date)
     print(f"  会話ログ: {len(events)} 件")
+
+    inbox = collect_inbox(args.date)
+    if inbox:
+        print(f"  inbox: {len(inbox)} ファイル")
+        stats["inbox"] = len(inbox)
+        events = sorted(events + inbox, key=lambda e: e["at"])
 
     if not args.no_discord:
         channels = {e["chat"] for e in events if e.get("chat")}

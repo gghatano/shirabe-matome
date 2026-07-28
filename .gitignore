@@ -9,3 +9,5 @@ drafts/
 __pycache__/
 *.pyc
 .DS_Store
+inbox/*
+!inbox/README.md
