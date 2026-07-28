@@ -133,13 +133,51 @@ GitHub Pages は消してもキャッシュと検索インデックスが残る�
 
 ```bash
 ./daily.sh                                   # 今日ぶんを収集・要約・通知
+./daily.sh --yesterday                       # 前日ぶん（定時ジョブと同じ）
 ./daily.sh 2026-07-26                        # 日付を指定
 
 python publish.py --date 2026-07-26          # ドラフト一覧を見る（変更なし）
 python publish.py --date 2026-07-26 --select 1,3
-python publish.py --date 2026-07-26 --select all
-python publish.py --date 2026-07-26 --select none
 ```
+
+日付をまたいで通し番号で扱うこともできる。溜まったドラフトを10件ずつ見るとき用。
+
+```bash
+python publish.py --queue                    # 1ページ目（10件）
+python publish.py --queue --page 3
+python publish.py --queue --select 12,15     # 通し番号で公開
+
+python publish.py --queue --decline all      # 「公開しない」印をつける
+python publish.py --queue --undecline 12     # 印を外す
+python publish.py --queue --show-declined    # 印つきも含めて見る
+```
+
+通し番号は `drafts/_queue.json` に保存され、**一度振ったら変わらない**。公開済みは欠番として
+残る。番号がずれると、人が見た一覧と実際に公開されるものが食い違うため。
+
+「公開しない」と決めたものは `--decline` で一覧から外す。ファイルは消さないので、後から
+`--undecline` で戻せるし、印がついていても番号を明示すれば公開できる（`--select all` には
+含まれない）。印をつけずに放置すると、翌日以降の新着が古いドラフトに埋もれる。
+
+### 選ぶ作業の定型
+
+「10件出す → 選ぶ → 選ばれなかったものは二度と出さない」を1往復で回す。
+
+```bash
+python publish.py --queue                        # ① 10件出す
+python publish.py --queue --select 2 --decline-rest   # ② 選ぶ＋残りを外す
+python publish.py --queue                        # ③ 次の10件（前回の残りは出ない）
+```
+
+`--decline-rest` は、**直前に `--queue` で提示した組**のうち選ばれなかったものに
+「公開しない」印をつける。提示した集合は `drafts/_queue.json` の `last_offered` に
+記録されるので、選択が別のコマンド実行になっても対象がずれない。
+
+この形にしないと、見送ったドラフトが毎回先頭に居座り、新しいものが後ろに溜まり続ける。
+判断済みのものを一覧から消していくのが、溜まったドラフトを捌く唯一の方法になる。
+
+順序は「公開 → 除外」。公開が失敗すれば除外は実行されないので、公開できていないものが
+黙って一覧から消えることはない。
 
 個別に動かすこともできる。
 
