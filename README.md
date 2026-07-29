@@ -99,11 +99,12 @@ gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow
 
 ### ネタ元
 
-2つを混ぜる。
+4つを混ぜる。
 
 | 元 | 取得方法 | 備考 |
 |---|---|---|
-| Claude Code の会話ログ | `~/.claude/projects/*/*.jsonl` を直接読む | プロジェクト単位でディレクトリが分かれている |
+| Claude Code の会話ログ（WSL） | `~/.claude/projects/*/*.jsonl` | プロジェクト単位でディレクトリが分かれている |
+| Claude Code の会話ログ（Windows） | `/mnt/c/Users/*/.claude/projects/*/*.jsonl` | WSL とは別に溜まる。読まないと半分以上落ちる |
 | Discord の会話 | Discord REST API | Claude を経由しなかった発言を拾うため |
 | `inbox/` に置いたファイル | ディレクトリを読む | ChatGPT など他ツールでの調べもの、記事のメモ |
 
@@ -139,6 +140,19 @@ Discord のやりとりが Claude Code 経由で行われた場合、それは�
 
 統合は**ソース単位ではなくトピック単位**で行う。同じ話を Claude Code と Discord の両方で
 していることがあるため。
+
+#### Windows 側のログを読む理由
+
+同じマシンでも、WSL で動かした Claude Code と Windows で動かした Claude Code では
+トランスクリプトの置き場が違う。`~/.claude` しか見ないと、Windows 側の作業が丸ごと
+落ちる。実際にこれで **07-08〜07-24 の17日分がまるごと欠落**し、07-29 は日次ジョブが
+「0件」を出したが、同じ日に Windows 側では 4.6 万字ぶんの作業（R のインストールなど）
+をしていた。「素材が無い日」と「見ていない場所がある」は区別が付かないので、
+落ちていることに気づけない。
+
+`/mnt/c/Users/*/.claude/projects` を追加で読む。WSL からは普通のディレクトリとして
+見えるので、特別な連携は要らない。`--no-windows` で切れる。
+material.md では `win: <プロジェクト>` と出所が分かるようにしてある。
 
 ### 2段階の承認
 

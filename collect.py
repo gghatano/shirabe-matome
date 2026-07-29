@@ -15,7 +15,8 @@ Discord のやりとりが Claude Code 経由で行われた場合、それは 1
 使い方:
     python collect.py                     # 今日（JST）
     python collect.py --date 2026-07-26
-    python collect.py --no-discord        # ログだけ
+    python collect.py --no-discord        # Discord API を叩かない
+    python collect.py --no-windows        # Windows 側のログを読まない
 """
 
 from __future__ import annotations
@@ -36,6 +37,23 @@ DRAFTS_DIR = ROOT / "drafts"
 INBOX_DIR = ROOT / "inbox"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 DISCORD_ENV = Path.home() / ".claude" / "channels" / "discord" / ".env"
+
+# WSL から見える Windows 側のホーム。Windows で動かした Claude Code の
+# トランスクリプトはこちらに溜まり、Linux 側の ~/.claude からは見えない。
+# 両方を読まないと、同じ日の作業が片方だけ記事になる。
+WIN_PROJECTS_GLOB = "/mnt/c/Users/*/.claude/projects"
+
+
+def project_roots(include_windows: bool = True) -> list[tuple[str, Path]]:
+    """(ラベル, ディレクトリ) の並び。ラベルは material.md での出所表示に使う。"""
+    roots: list[tuple[str, Path]] = []
+    if PROJECTS_DIR.is_dir():
+        roots.append(("", PROJECTS_DIR))
+    if include_windows:
+        for p in sorted(Path("/").glob(WIN_PROJECTS_GLOB.lstrip("/"))):
+            if p.is_dir():
+                roots.append(("win", p))
+    return roots
 
 # inbox のファイル名から日付を取る。付いていなければ更新時刻で判定する。
 INBOX_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
@@ -85,26 +103,39 @@ def to_jst(ts: str) -> datetime | None:
         return None
 
 
-def project_label(path: Path) -> str:
-    """~/.claude/projects/-home-user-workspace-projects-foo → workspace/projects/foo"""
+def project_label(path: Path, src: str = "") -> str:
+    """トランスクリプトの置き場から、読みやすいプロジェクト名を作る。
+
+    -home-user-workspace-projects-foo        → workspace/projects/foo
+    C--Users-user-Documents-workspace-foo    → win: Documents/workspace/foo
+    """
     name = path.parent.name.lstrip("-")
     parts = name.split("-")
-    # ホームディレクトリ部分（home/<user>）は冗長なので落とす
+    # ホーム部分（home/<user> や C//Users/<user>）は冗長なので落とす
     if len(parts) >= 2 and parts[0] == "home":
         parts = parts[2:]
-    return "/".join(parts) or name
+    elif len(parts) >= 3 and parts[0] == "C" and parts[2] == "Users":
+        parts = parts[4:]
+    label = "/".join(p for p in parts if p) or name
+    return f"{src}: {label}" if src else label
 
 
 # ---------------------------------------------------------------- 会話ログ
 
-def collect_transcripts(day: str) -> tuple[list[dict], set[str], Counter]:
+def collect_transcripts(day: str, roots: list[tuple[str, Path]]) -> tuple[list[dict], set[str], Counter]:
     """指定日の発言を時系列で返す。あわせて Discord の message_id 集合と統計も返す。"""
     events: list[dict] = []
     seen_discord_ids: set[str] = set()
     stats = Counter()
 
-    for path in sorted(PROJECTS_DIR.glob("*/*.jsonl")):
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    paths = [(src, p) for src, root in roots for p in sorted(root.glob("*/*.jsonl"))]
+    for src, path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as e:
+            print(f"  {path} を読めません: {e}", file=sys.stderr)
+            continue
+        for line in lines:
             if not line.strip():
                 continue
             try:
@@ -126,7 +157,7 @@ def collect_transcripts(day: str) -> tuple[list[dict], set[str], Counter]:
             base = {
                 "at": dt,
                 "session": (o.get("sessionId") or "")[:8],
-                "project": project_label(path),
+                "project": project_label(path, src),
             }
 
             if typ == "user":
@@ -358,6 +389,8 @@ def main() -> int:
     ap.add_argument("--date", default=datetime.now(JST).strftime("%Y-%m-%d"),
                     help="対象日 (YYYY-MM-DD, JST)。既定は今日")
     ap.add_argument("--no-discord", action="store_true", help="Discord API を叩かない")
+    ap.add_argument("--no-windows", action="store_true",
+                    help="Windows 側 (/mnt/c/Users/*/.claude) のログを読まない")
     ap.add_argument("--out", help="出力先。既定は drafts/<日付>/material.md")
     args = ap.parse_args()
 
@@ -367,13 +400,17 @@ def main() -> int:
         print(f"エラー: --date は YYYY-MM-DD 形式で（現在: {args.date!r}）", file=sys.stderr)
         return 1
 
-    if not PROJECTS_DIR.is_dir():
+    roots = project_roots(include_windows=not args.no_windows)
+    if not roots:
         print(f"エラー: 会話ログが見つかりません: {PROJECTS_DIR}", file=sys.stderr)
         return 1
 
     print(f"● {args.date} の素材を集めます")
-    events, seen_ids, stats = collect_transcripts(args.date)
-    print(f"  会話ログ: {len(events)} 件")
+    print("  読む場所: " + " / ".join(f"{s or 'wsl'}:{p}" for s, p in roots))
+    events, seen_ids, stats = collect_transcripts(args.date, roots)
+    by_src = Counter("win" if e["project"].startswith("win:") else "wsl" for e in events)
+    detail = "  ".join(f"{k}={v}" for k, v in sorted(by_src.items()))
+    print(f"  会話ログ: {len(events)} 件（{detail}）")
 
     inbox = collect_inbox(args.date)
     if inbox:
