@@ -13,7 +13,6 @@
     python publish.py --queue                        # 1ページ目
     python publish.py --queue --page 3               # 3ページ目
     python publish.py --queue --select 12,15         # 通し番号で公開
-    python publish.py --queue --rebuild              # 新しいドラフトを番号に取り込む
 
 `--select` を付けない限り何も変更しない。選ばれた記事だけが drafts/ から posts/ へ移り、
 ビルドとコミットが走る。選ばれなかったものは drafts/ に残るだけで公開されない。
@@ -84,14 +83,20 @@ QUEUE_PATH = DRAFTS_DIR / "_queue.json"
 PAGE_SIZE = 10
 
 
-def load_queue(rebuild: bool = False) -> dict:
-    """通し番号つきの未公開ドラフト一覧。一度振った番号は変えない。"""
+def load_queue() -> dict:
+    """通し番号つきの未公開ドラフト一覧。一度振った番号は変えない。
+
+    新しいドラフトは呼ぶたびに自動で取り込まれる。作り直す口は用意しない —
+    番号を振り直すと「公開しない」の判断が消え、人が見た一覧と食い違うため。
+    壊れた場合は drafts/_queue.json を手で消す（判断はやり直しになる）。
+    """
     queue = {"next_n": 1, "items": []}
-    if QUEUE_PATH.is_file() and not rebuild:
+    if QUEUE_PATH.is_file():
         try:
             queue = json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            sys.exit(f"エラー: {QUEUE_PATH.relative_to(ROOT)} が壊れています")
+            sys.exit(f"エラー: {QUEUE_PATH.relative_to(ROOT)} が壊れています。\n"
+                     "  手で消せば作り直せますが、「公開しない」の判断は失われます。")
 
     known = {(i["date"], i["slug"]) for i in queue["items"]}
     added = 0
@@ -270,7 +275,6 @@ def main() -> int:
     ap.add_argument("--no-commit", action="store_true", help="ファイルを移すだけ")
     ap.add_argument("--queue", action="store_true", help="日付をまたいだ通し番号で扱う")
     ap.add_argument("--page", type=int, default=1, help="--queue のページ番号（10件ずつ）")
-    ap.add_argument("--rebuild", action="store_true", help="--queue に新しいドラフトを取り込む")
     ap.add_argument("--decline", help="公開しない印をつける番号（例: 1,5 / all）")
     ap.add_argument("--undecline", help="公開しない印を外す番号")
     ap.add_argument("--show-declined", action="store_true", help="公開しない印のものも一覧に出す")
@@ -279,7 +283,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.queue:
-        queue = load_queue(rebuild=args.rebuild)
+        queue = load_queue()
         if args.decline:
             return set_declined(queue, args.decline, True)
         if args.undecline:
